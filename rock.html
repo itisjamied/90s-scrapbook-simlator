@@ -33,6 +33,7 @@
     let bodyPose;
     let poses = [];
     let connections = [];
+    let faceImg;
 
     const camW = 640;
     const camH = 480;
@@ -40,6 +41,9 @@
     function preload() {
       // Default = MoveNet
       bodyPose = ml5.bodyPose("MoveNet");
+
+      // Replace with your own image path
+      faceImg = loadImage("face.png");
     }
 
     function setup() {
@@ -55,6 +59,7 @@
       // Start pose detection
       bodyPose.detectStart(video, gotPoses);
 
+      imageMode(CENTER);
       textFont("Arial");
     }
 
@@ -74,6 +79,7 @@
       text("Pose Detection Overlay", camW + camW / 2, 20);
 
       // LEFT: raw video
+      imageMode(CORNER);
       image(video, 0, 40, camW, camH);
 
       // RIGHT: video again
@@ -82,6 +88,9 @@
       // Draw pose overlay on right side
       drawSkeletons(camW, 40);
       drawKeypoints(camW, 40);
+
+      // Draw face replacement image on right side
+      drawFaceReplacement(camW, 40);
     }
 
     function drawSkeletons(offsetX, offsetY) {
@@ -128,6 +137,77 @@
         }
       }
     }
+
+  function drawFaceReplacement(offsetX, offsetY) {
+  imageMode(CENTER);
+
+  for (let i = 0; i < poses.length; i++) {
+    let pose = poses[i];
+    let kp = pose.keypoints;
+
+    // MoveNet indices:
+    // 0 nose
+    // 1 left eye
+    // 2 right eye
+    // 3 left ear
+    // 4 right ear
+
+    let nose = kp[0];
+    let leftEye = kp[1];
+    let rightEye = kp[2];
+    let leftEar = kp[3];
+    let rightEar = kp[4];
+
+    let leftPoint = null;
+    let rightPoint = null;
+
+    // Prefer ears for wider head measurement
+    if (leftEar && rightEar && leftEar.confidence > 0.1 && rightEar.confidence > 0.1) {
+      leftPoint = leftEar;
+      rightPoint = rightEar;
+    }
+    // Fallback to eyes
+    else if (leftEye && rightEye && leftEye.confidence > 0.1 && rightEye.confidence > 0.1) {
+      leftPoint = leftEye;
+      rightPoint = rightEye;
+    } else {
+      continue;
+    }
+
+    // Center position
+    let centerX, centerY;
+    if (nose && nose.confidence > 0.1) {
+      centerX = nose.x;
+      centerY = nose.y;
+    } else {
+      centerX = (leftPoint.x + rightPoint.x) / 2;
+      centerY = (leftPoint.y + rightPoint.y) / 2;
+    }
+
+    // Width from outer face anchors
+    let faceWidth = dist(leftPoint.x, leftPoint.y, rightPoint.x, rightPoint.y);
+    faceWidth *= 1.35;
+
+    // Preserve image aspect ratio
+    let aspect = faceImg.height / faceImg.width;
+    let faceHeight = faceWidth * aspect;
+
+    // Rotation angle from left anchor to right anchor
+    let angle = atan2(
+      rightPoint.y - leftPoint.y,
+      rightPoint.x - leftPoint.x
+    );
+
+    // Slight upward adjustment so the overlay sits better
+    let yOffset = faceHeight * 0.08;
+
+    push();
+    translate(centerX + offsetX, centerY + offsetY - yOffset);
+    rotate(angle + PI);
+    image(faceImg, 0, 0, faceWidth * 1.4, faceHeight* 1.4);
+    pop();
+  }
+}
   </script>
 </body>
 </html>
