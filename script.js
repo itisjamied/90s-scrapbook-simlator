@@ -1,369 +1,300 @@
-import {
-  FilesetResolver,
-  PoseLandmarker
-} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.mjs";
+let video;
 
-const canvas = document.getElementById("overlay");
-const fallbackCanvas = document.getElementById("membrane");
-const activeCanvas = canvas || fallbackCanvas;
+let bodyPose;
+let connections;
 
-if (!activeCanvas) {
-  throw new Error("Canvas element not found. Expected #overlay or #membrane.");
-}
+let poses = [];
 
-const ctx = activeCanvas.getContext("2d");
+//charcters
+let rock;
 
-if (!ctx) {
-  throw new Error("2D canvas context is unavailable.");
-}
-const video = document.getElementById("webcam");
+// simple character system
+let characters = [];
 
-let width = 0;
-let height = 0;
-let dpr = Math.min(window.devicePixelRatio || 1, 2);
+function preload(){
+    // bodyPose = ml5.bodyPose("BlazePose", {flipped:true});
+    bodyPose = ml5.bodyPose("Movenet", {flipped:true});
 
-let poseLandmarker = null;
-let lastVideoTime = -1;
-let poseResult = null;
-const landmarkHistory = new Map();
+    rock = {
+        name: "rock",
 
-const LANDMARK_SMOOTHING = 0.75;
-const MAX_LANDMARK_STEP_PX = 60;
+        head: loadImage("assets/rock/head.png"),
+        torso: loadImage("assets/rock/torso.png"),
 
-// Swap these paths with your own scrapbook image cutouts.
-const CUTOUT_PATHS = {
-  head: "rock-head.png",
-  // torso: "assets/torso.png",
-  // leftFoot: "assets/left-foot.png",
-  // rightFoot: "assets/right-foot.png"
-};
+        leftArm: loadImage("assets/rock/left-arm.png"),
+        rightArm: loadImage("assets/rock/right-arm.png"),
 
-function loadCutout(src) {
-  const image = new Image();
-  const state = {
-    image,
-    ready: false,
-    configured: Boolean(src)
+        leftLeg: loadImage("assets/rock/left-leg.png"),
+        rightLeg: loadImage("assets/rock/right-leg.png")
   };
-
-  if (!src) {
-    return state;
-  }
-
-  image.onload = () => {
-    state.ready = true;
-  };
-
-  image.onerror = () => {
-    state.ready = false;
-  };
-
-  image.src = src;
-  return state;
 }
 
-const cutouts = {
-  head: loadCutout(CUTOUT_PATHS.head),
-  torso: loadCutout(CUTOUT_PATHS.torso),
-  leftFoot: loadCutout(CUTOUT_PATHS.leftFoot),
-  rightFoot: loadCutout(CUTOUT_PATHS.rightFoot)
-};
-
-const SHOW_SKELETON = false;
-const FALLBACK_TO_SKELETON_WHEN_CUTOUTS_MISSING = true;
-
-function resize() {
-  dpr = Math.min(window.devicePixelRatio || 1, 2);
-  width = activeCanvas.clientWidth;
-  height = activeCanvas.clientHeight;
-
-  if (!width || !height) {
-    return;
-  }
-
-  activeCanvas.width = width * dpr;
-  activeCanvas.height = height * dpr;
-  activeCanvas.style.width = width + "px";
-  activeCanvas.style.height = height + "px";
-
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+function mousePressed(){
+    console.log(poses);
 }
 
-async function setupPoseTracking() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: {
-      facingMode: "user",
-      width: 640,
-      height: 480
-    },
-    audio: false
-  });
-
-  video.srcObject = stream;
-
-  await new Promise((resolve) => {
-    video.onloadedmetadata = () => {
-      video.play();
-      resolve();
-    };
-  });
-
-  const vision = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
-  );
-
-  poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
-    baseOptions: {
-      modelAssetPath:
-        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
-    },
-    runningMode: "VIDEO",
-    numPoses: 1,
-    minPoseDetectionConfidence: 0.5,
-    minPosePresenceConfidence: 0.5,
-    minTrackingConfidence: 0.5
-  });
+function gotPose(results){
+    // console.log(results);
+    poses = results;
 }
 
-function updatePose() {
-  if (!poseLandmarker || video.readyState < 2) return;
-  if (video.currentTime === lastVideoTime) return;
+function setup(){
+    createCanvas(640, 480);
+    // createCanvas(1280, 960);
+    video = createCapture(VIDEO, {flipped:true});
+    video.hide();
 
-  lastVideoTime = video.currentTime;
-  poseResult = poseLandmarker.detectForVideo(video, performance.now());
-
-  if (!poseResult?.landmarks?.length) {
-    landmarkHistory.clear();
-  }
+    //"detectStart" for continuous call, "getPose" for call back function anytime we get results
+    bodyPose.detectStart(video, gotPose)
+    connections = bodyPose.getSkeleton();
+    console.log(connections);
 }
 
-function drawBackground() {
-  ctx.fillStyle = "#111";
-  ctx.fillRect(0, 0, width, height);
+
+////////////////////////////
+/// helpers / draw functions
+/////////////////////////////
+
+function drawHead(pose, character) {
+    let leftEar = pose.left_ear;
+    let rightEar = pose.right_ear;
+
+    if (!leftEar || !rightEar) return;
+
+    let centerX = (leftEar.x + rightEar.x) / 2;
+    let centerY = (leftEar.y + rightEar.y) / 2;
+
+    let faceWidth = dist(leftEar.x, leftEar.y, rightEar.x, rightEar.y);
+    let angle = atan2(rightEar.y - leftEar.y, rightEar.x - leftEar.x);
+
+    let w = faceWidth * 2.2;
+    let h = w * (character.head.height / character.head.width);
+
+    push();
+    translate(centerX, centerY);
+    rotate(angle);
+    imageMode(CENTER);
+    image(character.head, 0, -h * 0.1, w, h);
+    pop();
 }
 
-function getLandmark(index) {
-  if (!poseResult?.landmarks?.length) return null;
+function drawTorso(pose, character) {
+  let leftShoulder = pose.left_shoulder;
+  let rightShoulder = pose.right_shoulder;
+  let leftHip = pose.left_hip;
+  let rightHip = pose.right_hip;
 
-  const lm = poseResult.landmarks[0][index];
-  if (!lm) return null;
+  if (!leftShoulder || !rightShoulder || !leftHip || !rightHip) return;
 
-  const rawPoint = {
-    x: (1 - lm.x) * width, // mirror for selfie view
-    y: lm.y * height,
-    z: lm.z,
-    visibility: lm.visibility ?? 0
-  };
+  let shoulderCenterX = (leftShoulder.x + rightShoulder.x) / 2;
+  let shoulderCenterY = (leftShoulder.y + rightShoulder.y) / 2;
 
-  const previous = landmarkHistory.get(index);
-  if (!previous) {
-    landmarkHistory.set(index, rawPoint);
-    return rawPoint;
-  }
+  let hipCenterX = (leftHip.x + rightHip.x) / 2;
+  let hipCenterY = (leftHip.y + rightHip.y) / 2;
 
-  const deltaX = rawPoint.x - previous.x;
-  const deltaY = rawPoint.y - previous.y;
-  const limitedX = previous.x + Math.max(-MAX_LANDMARK_STEP_PX, Math.min(MAX_LANDMARK_STEP_PX, deltaX));
-  const limitedY = previous.y + Math.max(-MAX_LANDMARK_STEP_PX, Math.min(MAX_LANDMARK_STEP_PX, deltaY));
+//   let centerX = (shoulderCenterX + hipCenterX) / 2;
+//   let centerY = (shoulderCenterY + hipCenterY) / 2; 
 
-  const smoothed = {
-    x: previous.x * LANDMARK_SMOOTHING + limitedX * (1 - LANDMARK_SMOOTHING),
-    y: previous.y * LANDMARK_SMOOTHING + limitedY * (1 - LANDMARK_SMOOTHING),
-    z: previous.z * LANDMARK_SMOOTHING + rawPoint.z * (1 - LANDMARK_SMOOTHING),
-    visibility: previous.visibility * LANDMARK_SMOOTHING + rawPoint.visibility * (1 - LANDMARK_SMOOTHING)
-  };
+  let torsoWidth = dist(leftShoulder.x, leftShoulder.y, rightShoulder.x, rightShoulder.y);
 
-  landmarkHistory.set(index, smoothed);
-  return smoothed;
+  // auto height based on image proportions
+  let torsoHeight = torsoWidth * (character.torso.height / character.torso.width);
+
+  let angle = atan2(hipCenterY - shoulderCenterY, hipCenterX - shoulderCenterX) + HALF_PI;
+
+  push();
+  translate(shoulderCenterX, shoulderCenterY);
+  rotate(angle + PI);
+  imageMode(CENTER);
+  // offset by half height so the top edge of the torso aligns with the shoulder line
+  image(character.torso, 0, torsoHeight / 2, torsoWidth, torsoHeight);
+  pop();
 }
 
-function drawDot(point, color = "hotpink", size = 8) {
-  if (!point) return;
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(point.x, point.y, size, 0, Math.PI * 2);
-  ctx.fill();
+function drawLeftArm(pose, character) {
+  let shoulder = pose.left_shoulder;
+  let wrist = pose.left_wrist;
+
+  if (!shoulder || !wrist) return;
+
+  let centerX = (shoulder.x + wrist.x) / 2;
+  let centerY = (shoulder.y + wrist.y) / 2;
+
+  let armLength = dist(shoulder.x, shoulder.y, wrist.x, wrist.y);
+  let angle = atan2(wrist.y - shoulder.y, wrist.x - shoulder.x);
+
+  // width follows the arm length
+  let armWidth = armLength * 0.3;
+
+  // height auto-scales from the image ratio
+  let armHeight = armWidth * (character.leftArm.height / character.leftArm.width);
+
+  push();
+  translate(centerX, centerY);
+  rotate(angle - PI / 2);
+  imageMode(CENTER);
+  image(character.leftArm, 0, 0, armWidth, armHeight);
+  pop();
 }
 
-function drawLine(a, b, color = "white", lineWidth = 3) {
-  if (!a || !b) return;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = lineWidth;
-  ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.lineTo(b.x, b.y);
-  ctx.stroke();
+function drawRightArm(pose, character) {
+  let shoulder = pose.right_shoulder;
+  let wrist = pose.right_wrist;
+
+  if (!shoulder || !wrist) return;
+
+  let centerX = (shoulder.x + wrist.x) / 2;
+  let centerY = (shoulder.y + wrist.y) / 2;
+
+  let armLength = dist(shoulder.x, shoulder.y, wrist.x, wrist.y);
+  let angle = atan2(wrist.y - shoulder.y, wrist.x - shoulder.x);
+
+  // SAME logic as left arm
+  let armWidth = armLength * 0.3;
+
+  // preserve image ratio
+  let armHeight = armWidth * (character.rightArm.height / character.rightArm.width);
+
+  push();
+  translate(centerX, centerY);
+
+  // mirror rotation behavior
+  rotate(angle - PI / 2);
+
+  imageMode(CENTER);
+  image(character.rightArm, 0, 0, armWidth, armHeight);
+
+  pop();
 }
 
-function drawCutout(part, x, y, widthPx, heightPx, rotation = 0, offsetY = 0) {
-  const sprite = cutouts[part];
+function drawLeftLeg(pose, character) {
+  let hip = pose.left_hip;
+  let ankle = pose.left_ankle;
 
-  if (!sprite?.ready) {
-    return false;
-  }
+  if (!hip || !ankle) return;
 
-  ctx.save();
-  ctx.translate(x, y + offsetY);
-  ctx.rotate(rotation);
-  ctx.drawImage(sprite.image, -widthPx / 2, -heightPx / 2, widthPx, heightPx);
-  ctx.restore();
-  return true;
+  let centerX = (hip.x + ankle.x) / 2;
+  let centerY = (hip.y + ankle.y) / 2;
+
+  let legLength = dist(hip.x, hip.y, ankle.x, ankle.y);
+  let angle = atan2(ankle.y - hip.y, ankle.x - hip.x);
+
+  let legWidth = legLength * 0.5;
+  let legHeight = legWidth * (character.leftLeg.height / character.leftLeg.width);
+
+  push();
+  translate(centerX, centerY);
+  rotate(angle - PI / 2);
+  imageMode(CENTER);
+  image(character.leftLeg, 0, 0, legWidth, legHeight);
+  pop();
 }
 
-function hasReadyCutout(part) {
-  return Boolean(cutouts[part]?.ready);
+function drawRightLeg(pose, character) {
+  let hip = pose.right_hip;
+  let ankle = pose.right_ankle;
+
+  if (!hip || !ankle) return;
+
+  let centerX = (hip.x + ankle.x) / 2;
+  let centerY = (hip.y + ankle.y) / 2;
+
+  let legLength = dist(hip.x, hip.y, ankle.x, ankle.y);
+  let angle = atan2(ankle.y - hip.y, ankle.x - hip.x);
+
+  let legWidth = legLength* 0.5;
+  let legHeight = legWidth * (character.rightLeg.height / character.rightLeg.width);
+
+  push();
+  translate(centerX, centerY);
+  rotate(angle - PI / 2);
+  imageMode(CENTER);
+  image(character.rightLeg, 0, 0, legWidth, legHeight);
+  pop();
 }
 
-function shouldShowFallbackSkeleton() {
-  if (!FALLBACK_TO_SKELETON_WHEN_CUTOUTS_MISSING) return false;
+////////////////////////////
+/// draw function
+/////////////////////////////
+function draw(){
+    image(video, 0, 0);
 
-  return !hasReadyCutout("head") || !hasReadyCutout("torso") || !hasReadyCutout("leftFoot") || !hasReadyCutout("rightFoot");
-}
+    if ( poses.length > 0){
+        // Loop through all detected poses
+        for (let poseIndex = 0; poseIndex < poses.length; poseIndex++){
+            let pose = poses[poseIndex];
+            // Default to rock for all poses
+            let character = characters[poseIndex] || rock;
 
-function drawSkeleton() {
-  const nose = getLandmark(0);
-  const leftShoulder = getLandmark(11);
-  const rightShoulder = getLandmark(12);
-  const leftElbow = getLandmark(13);
-  const rightElbow = getLandmark(14);
-  const leftWrist = getLandmark(15);
-  const rightWrist = getLandmark(16);
-  const leftHip = getLandmark(23);
-  const rightHip = getLandmark(24);
-  const leftKnee = getLandmark(25);
-  const rightKnee = getLandmark(26);
-  const leftAnkle = getLandmark(27);
-  const rightAnkle = getLandmark(28);
+            /////////////////////////
+            // individual keypoints
+            /////////////////////////
 
-  drawLine(leftShoulder, rightShoulder);
-  drawLine(leftShoulder, leftElbow);
-  drawLine(leftElbow, leftWrist);
-  drawLine(rightShoulder, rightElbow);
-  drawLine(rightElbow, rightWrist);
-  drawLine(leftShoulder, leftHip);
-  drawLine(rightShoulder, rightHip);
-  drawLine(leftHip, rightHip);
-  drawLine(leftHip, leftKnee);
-  drawLine(leftKnee, leftAnkle);
-  drawLine(rightHip, rightKnee);
-  drawLine(rightKnee, rightAnkle);
-  drawDot(leftShoulder, "yellow", 6);
-  drawDot(rightShoulder, "yellow", 6);
-  drawDot(leftHip, "lime", 6);
-  drawDot(rightHip, "lime", 6);
-}
+            // let x = pose.nose.x;
+            // let y = pose.nose.y;
+           
 
-function drawScrapbookBlocks() {
-  const leftShoulder = getLandmark(11);
-  const rightShoulder = getLandmark(12);
-  const leftHip = getLandmark(23);
-  const rightHip = getLandmark(24);
-  const leftAnkle = getLandmark(27);
-  const rightAnkle = getLandmark(28);
-  const nose = getLandmark(0);
+            // let rx = pose.right_wrist.x;
+            // let ry = pose.right_wrist.y;
 
-  if (leftShoulder && rightShoulder && leftHip && rightHip) {
-    const torsoX = (leftShoulder.x + rightShoulder.x + leftHip.x + rightHip.x) / 4;
-    const torsoY = (leftShoulder.y + rightShoulder.y + leftHip.y + rightHip.y) / 4;
+            // let lx = pose.left_wrist.x;
+            // let ly = pose.left_wrist.y;
 
-    const shoulderWidth = Math.abs(rightShoulder.x - leftShoulder.x);
-    const torsoHeight = Math.abs(((leftHip.y + rightHip.y) / 2) - ((leftShoulder.y + rightShoulder.y) / 2));
-    const torsoRotation = Math.atan2(
-      rightShoulder.y - leftShoulder.y,
-      rightShoulder.x - leftShoulder.x
-    );
+            // let d = dist(rx, ry, lx, ly);
 
-    const drewTorso = drawCutout(
-      "torso",
-      torsoX,
-      torsoY,
-      shoulderWidth * 0.95,
-      torsoHeight * 1.15,
-      torsoRotation
-    );
+            // fill(0, 255, 0);
+            // circle(rx, ry, 20);
+            // circle(lx, ly, 20);
 
-    if (!drewTorso) {
-      ctx.save();
-      ctx.translate(torsoX, torsoY);
-      ctx.rotate(torsoRotation);
-      ctx.fillStyle = "rgba(255, 60, 140, 0.7)";
-      ctx.fillRect(
-        -shoulderWidth * 0.7 / 2,
-        -torsoHeight * 0.45,
-        shoulderWidth * 0.7,
-        torsoHeight * 0.9
-      );
-      ctx.restore();
+            // fill(255, 0, 0);
+            // circle(x, y, d/2);
+
+            /////////////////////////
+            // draw connections
+            /////////////////////////
+
+
+            for ( let i = 0; i < pose.keypoints.length; i++){
+               let keypoint = pose.keypoints[i];
+               fill(0, 0, 255);
+               noStroke();
+               if (keypoint.confidence > 0.4){
+                    circle(keypoint.x, keypoint.y, 10);
+               }
+            }
+
+            for (let i = 0; i < connections.length; i++){
+
+                let connection = connections[i];
+
+                let a = connection[0];
+                let b = connection[1];
+
+                let keyPointA = pose.keypoints[a];
+                let keyPointB = pose.keypoints[b];
+
+                let confA = keyPointA.confidence;
+                let confB = keyPointB.confidence;
+
+                if (confA > 0.1 && confB > 0.1){
+                    stroke(255, 0, 255);
+                    strokeWeight(8);
+                    line(keyPointA.x, keyPointA.y, keyPointB.x, keyPointB.y);
+                }
+                
+            }
+
+            // drawHead(pose, character);
+            // drawTorso(pose, character);
+            // drawArms(pose, character);
+            // drawLegs(pose, character);
+       
+            drawLeftLeg(pose, character);
+            drawLeftArm(pose, character);
+            drawRightArm(pose, character);
+            drawRightLeg(pose, character);
+            drawTorso(pose, character);
+            drawHead(pose, character);
+        }
     }
-  }
-
-  if (nose) {
-    const shoulderWidth = leftShoulder && rightShoulder
-      ? Math.abs(rightShoulder.x - leftShoulder.x)
-      : 100;
-    const stickerSize = Math.max(64, Math.min(140, shoulderWidth * 0.9));
-    const drewHead = drawCutout(
-      "head",
-      nose.x,
-      nose.y,
-      stickerSize,
-      stickerSize,
-      0,
-      -32
-    );
-
-    if (!drewHead) {
-      drawDot({ x: nose.x, y: nose.y - 30 }, "cyan", stickerSize * 0.18);
-    }
-  }
-
-  if (leftAnkle) {
-    const drewLeftFoot = drawCutout("leftFoot", leftAnkle.x, leftAnkle.y, 72, 36, 0, -4);
-
-    if (!drewLeftFoot) {
-      ctx.fillStyle = "rgba(255,255,0,0.8)";
-      ctx.fillRect(leftAnkle.x - 24, leftAnkle.y - 10, 48, 20);
-    }
-  }
-
-  if (rightAnkle) {
-    const drewRightFoot = drawCutout("rightFoot", rightAnkle.x, rightAnkle.y, 72, 36, 0, -4);
-
-    if (!drewRightFoot) {
-      ctx.fillStyle = "rgba(255,255,0,0.8)";
-      ctx.fillRect(rightAnkle.x - 24, rightAnkle.y - 10, 48, 20);
-    }
-  }
 }
-
-function animate() {
-  updatePose();
-  drawBackground();
-  if (SHOW_SKELETON || shouldShowFallbackSkeleton()) {
-    drawSkeleton();
-  }
-  drawScrapbookBlocks();
-  requestAnimationFrame(animate);
-}
-
-async function init() {
-  resize();
-  window.addEventListener("resize", resize);
-
-  try {
-    await setupPoseTracking();
-    animate();
-  } catch (error) {
-    console.error(error);
-    drawBackground();
-    ctx.fillStyle = "white";
-    ctx.font = "16px sans-serif";
-    ctx.fillText(
-      "Camera / MediaPipe failed to start. Run on localhost and allow camera access.",
-      24,
-      40
-    );
-  }
-}
-
-init();
