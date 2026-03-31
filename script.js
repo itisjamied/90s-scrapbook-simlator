@@ -1,9 +1,26 @@
 let video;
+let showCamera = true;
 
 let bodyPose;
 let connections;
 
+let currentFit = { x: 0, y: 0, scale: 1, sceneW: 640, sceneH: 480 };
+
 let poses = [];
+
+const LERP_AMT = 0.1;
+const MIN_CONF = 0.2;
+const JOINTS = [
+  "left_ear","right_ear",
+  "left_shoulder","right_shoulder",
+  "left_elbow","right_elbow",
+  "left_wrist","right_wrist",
+  "left_hip","right_hip",
+  "left_knee","right_knee",
+  "left_ankle","right_ankle"
+];
+
+let smoothedPoses = [];
 
 //charcters
 let rock;
@@ -21,33 +38,76 @@ function preload(){
         head: loadImage("assets/rock/head.png"),
         torso: loadImage("assets/rock/torso.png"),
 
-        leftArm: loadImage("assets/rock/left-arm.png"),
-        rightArm: loadImage("assets/rock/right-arm.png"),
+        leftUpperArm: loadImage("assets/rock/left-upper-arm.png"),
+        leftLowerArm: loadImage("assets/rock/left-lower-arm.png"),
+        rightUpperArm: loadImage("assets/rock/right-upper-arm.png"),
+        rightLowerArm: loadImage("assets/rock/right-lower-arm.png"),
 
-        leftLeg: loadImage("assets/rock/left-leg.png"),
-        rightLeg: loadImage("assets/rock/right-leg.png")
-  };
-}
+        leftUpperLeg: loadImage("assets/rock/left-upper-leg.png"),
+        leftLowerLeg: loadImage("assets/rock/left-lower-leg.png"),
+        rightUpperLeg: loadImage("assets/rock/right-upper-leg.png"),
+        rightLowerLeg: loadImage("assets/rock/right-lower-leg.png")
+        };
+    }
 
 function mousePressed(){
     console.log(poses);
 }
 
+// function gotPose(results){
+//     // console.log(results);
+//     poses = results;
+// }
 function gotPose(results){
-    // console.log(results);
-    poses = results;
+  poses = results.map((pose, i) => {
+    let prev = smoothedPoses[i] || {};
+    let smoothPose = { ...pose };
+
+    JOINTS.forEach(joint => {
+      let p = pose[joint];
+      if (!p || p.confidence < MIN_CONF) return smoothPose[joint] = null;
+
+      let old = prev[joint] || p;
+      smoothPose[joint] = {
+        ...p,
+        x: lerp(old.x, p.x, LERP_AMT),
+        y: lerp(old.y, p.y, LERP_AMT)
+      };
+    });
+
+    return smoothPose;
+  });
+
+  smoothedPoses = poses;
 }
 
 function setup(){
-    createCanvas(640, 480);
-    // createCanvas(1280, 960);
+  createCanvas(windowWidth, windowHeight);
     video = createCapture(VIDEO, {flipped:true});
+    video.size(640, 480);
     video.hide();
 
     //"detectStart" for continuous call, "getPose" for call back function anytime we get results
     bodyPose.detectStart(video, gotPose)
     connections = bodyPose.getSkeleton();
     console.log(connections);
+}
+
+function windowResized() {
+    resizeCanvas(windowWidth, windowHeight);
+}
+
+function getContainFit(srcW, srcH, dstW, dstH) {
+    const scale = min(dstW / srcW, dstH / srcH);
+    const drawW = srcW * scale;
+    const drawH = srcH * scale;
+    return {
+      x: (dstW - drawW) / 2,
+      y: (dstH - drawH) / 2,
+      scale,
+      sceneW: srcW,
+      sceneH: srcH
+    };
 }
 
 
@@ -111,113 +171,88 @@ function drawTorso(pose, character) {
   pop();
 }
 
-function drawLeftArm(pose, character) {
-  let shoulder = pose.left_shoulder;
-  let wrist = pose.left_wrist;
+function drawLimbSegment(start, end, img, widthScale) {
+  if (!start || !end || !img) return;
 
-  if (!shoulder || !wrist) return;
+  let centerX = (start.x + end.x) / 2;
+  let centerY = (start.y + end.y) / 2;
 
-  let centerX = (shoulder.x + wrist.x) / 2;
-  let centerY = (shoulder.y + wrist.y) / 2;
+  let segmentLength = dist(start.x, start.y, end.x, end.y);
+  let angle = atan2(end.y - start.y, end.x - start.x);
 
-  let armLength = dist(shoulder.x, shoulder.y, wrist.x, wrist.y);
-  let angle = atan2(wrist.y - shoulder.y, wrist.x - shoulder.x);
-
-  // width follows the arm length
-  let armWidth = armLength * 0.3;
-
-  // height auto-scales from the image ratio
-  let armHeight = armWidth * (character.leftArm.height / character.leftArm.width);
+  let segmentWidth = segmentLength * widthScale;
+  let segmentHeight = segmentWidth * (img.height / img.width);
 
   push();
   translate(centerX, centerY);
   rotate(angle - PI / 2);
   imageMode(CENTER);
-  image(character.leftArm, 0, 0, armWidth, armHeight);
+  image(img, 0, 0, segmentWidth, segmentHeight);
   pop();
+}
+
+function drawLeftArm(pose, character) {
+  let shoulder = pose.left_shoulder;
+  let elbow = pose.left_elbow;
+  let wrist = pose.left_wrist;
+
+  if (!shoulder || !elbow || !wrist) return;
+
+  drawLimbSegment(shoulder, elbow, character.leftUpperArm, 0.7);
+  drawLimbSegment(elbow, wrist, character.leftLowerArm, 0.7);
 }
 
 function drawRightArm(pose, character) {
   let shoulder = pose.right_shoulder;
+  let elbow = pose.right_elbow;
   let wrist = pose.right_wrist;
 
-  if (!shoulder || !wrist) return;
+  if (!shoulder || !elbow || !wrist) return;
 
-  let centerX = (shoulder.x + wrist.x) / 2;
-  let centerY = (shoulder.y + wrist.y) / 2;
-
-  let armLength = dist(shoulder.x, shoulder.y, wrist.x, wrist.y);
-  let angle = atan2(wrist.y - shoulder.y, wrist.x - shoulder.x);
-
-  // SAME logic as left arm
-  let armWidth = armLength * 0.3;
-
-  // preserve image ratio
-  let armHeight = armWidth * (character.rightArm.height / character.rightArm.width);
-
-  push();
-  translate(centerX, centerY);
-
-  // mirror rotation behavior
-  rotate(angle - PI / 2);
-
-  imageMode(CENTER);
-  image(character.rightArm, 0, 0, armWidth, armHeight);
-
-  pop();
+  drawLimbSegment(shoulder, elbow, character.rightUpperArm, 0.5);
+  drawLimbSegment(elbow, wrist, character.rightLowerArm, 0.5);
 }
 
 function drawLeftLeg(pose, character) {
   let hip = pose.left_hip;
+  let knee = pose.left_knee;
   let ankle = pose.left_ankle;
 
-  if (!hip || !ankle) return;
+  if (!hip || !knee || !ankle) return;
 
-  let centerX = (hip.x + ankle.x) / 2;
-  let centerY = (hip.y + ankle.y) / 2;
-
-  let legLength = dist(hip.x, hip.y, ankle.x, ankle.y);
-  let angle = atan2(ankle.y - hip.y, ankle.x - hip.x);
-
-  let legWidth = legLength * 0.5;
-  let legHeight = legWidth * (character.leftLeg.height / character.leftLeg.width);
-
-  push();
-  translate(centerX, centerY);
-  rotate(angle - PI / 2);
-  imageMode(CENTER);
-  image(character.leftLeg, 0, 0, legWidth, legHeight);
-  pop();
+  drawLimbSegment(hip, knee, character.leftUpperLeg, 0.7);
+  drawLimbSegment(knee, ankle, character.leftLowerLeg, 0.7);
 }
 
 function drawRightLeg(pose, character) {
   let hip = pose.right_hip;
+  let knee = pose.right_knee;
   let ankle = pose.right_ankle;
 
-  if (!hip || !ankle) return;
+  if (!hip || !knee || !ankle) return;
 
-  let centerX = (hip.x + ankle.x) / 2;
-  let centerY = (hip.y + ankle.y) / 2;
-
-  let legLength = dist(hip.x, hip.y, ankle.x, ankle.y);
-  let angle = atan2(ankle.y - hip.y, ankle.x - hip.x);
-
-  let legWidth = legLength* 0.5;
-  let legHeight = legWidth * (character.rightLeg.height / character.rightLeg.width);
-
-  push();
-  translate(centerX, centerY);
-  rotate(angle - PI / 2);
-  imageMode(CENTER);
-  image(character.rightLeg, 0, 0, legWidth, legHeight);
-  pop();
+  drawLimbSegment(hip, knee, character.rightUpperLeg, 0.5);
+  drawLimbSegment(knee, ankle, character.rightLowerLeg, 0.5);
+}
+function keyPressed() {
+  if (key === "v" || key === "V") showCamera = !showCamera;
 }
 
 ////////////////////////////
 /// draw function
 /////////////////////////////
 function draw(){
-    image(video, 0, 0);
+  background(0);
+
+  const sceneW = video.width || 640;
+  const sceneH = video.height || 480;
+  currentFit = getContainFit(sceneW, sceneH, width, height);
+
+  push();
+  translate(currentFit.x, currentFit.y);
+  scale(currentFit.scale);
+
+  if (showCamera) image(video, 0, 0, sceneW, sceneH);
 
     if ( poses.length > 0){
         // Loop through all detected poses
@@ -254,41 +289,36 @@ function draw(){
             /////////////////////////
 
 
-            for ( let i = 0; i < pose.keypoints.length; i++){
-               let keypoint = pose.keypoints[i];
-               fill(0, 0, 255);
-               noStroke();
-               if (keypoint.confidence > 0.4){
-                    circle(keypoint.x, keypoint.y, 10);
-               }
-            }
+            // for ( let i = 0; i < pose.keypoints.length; i++){
+            //    let keypoint = pose.keypoints[i];
+            //    fill(0, 0, 255);
+            //    noStroke();
+            //    if (keypoint.confidence > 0.1){
+            //         circle(keypoint.x, keypoint.y, 10);
+            //    }
+            // }
 
-            for (let i = 0; i < connections.length; i++){
+            // for (let i = 0; i < connections.length; i++){
 
-                let connection = connections[i];
+            //     let connection = connections[i];
 
-                let a = connection[0];
-                let b = connection[1];
+            //     let a = connection[0];
+            //     let b = connection[1];
 
-                let keyPointA = pose.keypoints[a];
-                let keyPointB = pose.keypoints[b];
+            //     let keyPointA = pose.keypoints[a];
+            //     let keyPointB = pose.keypoints[b];
 
-                let confA = keyPointA.confidence;
-                let confB = keyPointB.confidence;
+            //     let confA = keyPointA.confidence;
+            //     let confB = keyPointB.confidence;
 
-                if (confA > 0.1 && confB > 0.1){
-                    stroke(255, 0, 255);
-                    strokeWeight(8);
-                    line(keyPointA.x, keyPointA.y, keyPointB.x, keyPointB.y);
-                }
+            //     if (confA > 0.1 && confB > 0.1){
+            //         stroke(255, 0, 255);
+            //         strokeWeight(8);
+            //         line(keyPointA.x, keyPointA.y, keyPointB.x, keyPointB.y);
+            //     }
                 
-            }
+            // }
 
-            // drawHead(pose, character);
-            // drawTorso(pose, character);
-            // drawArms(pose, character);
-            // drawLegs(pose, character);
-       
             drawLeftLeg(pose, character);
             drawLeftArm(pose, character);
             drawRightArm(pose, character);
@@ -297,4 +327,6 @@ function draw(){
             drawHead(pose, character);
         }
     }
+
+        pop();
 }
